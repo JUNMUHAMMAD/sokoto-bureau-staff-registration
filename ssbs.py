@@ -44,7 +44,7 @@ menu = st.sidebar.radio("Navigation Menu", [
 
 # --- OPTION 1: HOME PAGE ---
 if menu == "🏠 Home Dashboard":
-    st.title("🏠 Secure Block System (SBS) Home")
+    st.title("🏠 State Bureau Of Statistics (SBS) Home")
     st.write("Welcome! This system is actively connected to your Postgres production database.")
     
     col1, col2, col3 = st.columns(3)
