@@ -11,27 +11,41 @@ if not os.path.exists(UPLOAD_DIR):
 
 MAX_FILE_SIZE_MB = 5
 
-# --- ESTABLISH GOOGLE SHEETS CONNECTION ---
-# This looks for the URL inside your deployment configuration
+# --- ESTABLISH CLOUD DATA CONNECTION ---
+# FORCE ttl=0 initially or use explicit clearing to prevent missing data bugs
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Read existing entries from the Google Sheet
-    staff_df = conn.read(ttl="5s") # Refreshes cache every 5 seconds
-except Exception:
-    # Fallback to prevent crash if sheet is not yet linked
+    raw_df = conn.read(ttl="2s") 
+    
+    # If the sheet returns completely empty or broken formatting, construct a safe template dataframe
+    if raw_df is None or raw_df.empty:
+        staff_df = pd.DataFrame(columns=[
+            "Computer Number", "Full Name", "Department", "Designation", 
+            "Grade Level", "Email", "Phone Number", "Credential Files", 
+            "Approval Status", "Approved By"
+        ])
+    else:
+        # Standardize empty values so they match cleanly
+        staff_df = raw_df.dropna(how="all")
+except Exception as e:
+    st.error(f"Database Connection Warning: {e}")
     staff_df = pd.DataFrame(columns=[
         "Computer Number", "Full Name", "Department", "Designation", 
         "Grade Level", "Email", "Phone Number", "Credential Files", 
         "Approval Status", "Approved By"
     ])
 
-# Helper function to push data updates back to Google Sheets
+# Helper function to completely clear out cached versions of Google Sheets
 def save_to_google_sheets(updated_df):
     try:
+        # Force clear all current cached database values
+        st.cache_data.clear()
         conn.update(data=updated_df)
-        st.cache_data.clear() # Clear streamlit cache to show immediate updates
+        st.cache_data.clear() # Clear again post-write to verify stability
+        return True
     except Exception as e:
         st.error(f"Failed to sync with database: {e}")
+        return False
 
 # --- MAIN NAVIGATION CONTROLLER ---
 menu = st.sidebar.radio("Navigation Menu", [
@@ -43,7 +57,7 @@ menu = st.sidebar.radio("Navigation Menu", [
 # --- OPTION 1: HOME PAGE ---
 if menu == "🏠 Home Dashboard":
     st.title("🏠 Secure Block System (SBS) Home")
-    st.write("Welcome! This database is actively connected to cloud storage.")
+    st.write("Welcome! This system is directly connected to your secure cloud database.")
     
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Submissions", len(staff_df))
@@ -70,17 +84,18 @@ elif menu == "📝 Staff Registration Form":
         submit_btn = st.form_submit_button("Submit Registration")
         
         if submit_btn:
+            # Enforce validation matching earlier constraints
             if not all([full_name, computer_number, department, designation, email, phone_number]):
                 st.error("⚠️ All fields are required.")
             elif not re.match(r"^[a-zA-Z\s]+$", full_name):
-                st.error("❌ Invalid Name.")
+                st.error("❌ Invalid Name: Characters only.")
             elif not (computer_number.isdigit() and len(computer_number) == 6):
                 st.error("❌ Computer Number must be exactly 6 digits.")
             elif not re.match(r"^(0|\+234)[789][01]\d{8}$", phone_number.replace(" ", "")):
-                st.error("❌ Invalid Nigerian Phone Number.")
+                st.error("❌ Invalid Nigerian Phone Number layout.")
             elif not uploaded_files:
                 st.error("⚠️ Please upload documents.")
-            elif not staff_df.empty and computer_number in staff_df["Computer Number"].astype(str).values:
+            elif not staff_df.empty and str(computer_number) in staff_df["Computer Number"].astype(str).values:
                 st.error("❌ This Computer Number has already registered.")
             else:
                 saved_file_names = []
@@ -91,7 +106,7 @@ elif menu == "📝 Staff Registration Form":
                     saved_file_names.append(safe_name)
                 
                 new_entry = pd.DataFrame([{
-                    "Computer Number": computer_number,
+                    "Computer Number": str(computer_number),
                     "Full Name": full_name,
                     "Department": department,
                     "Designation": designation,
@@ -104,9 +119,10 @@ elif menu == "📝 Staff Registration Form":
                 }])
                 
                 new_df = pd.concat([staff_df, new_entry], ignore_index=True)
-                save_to_google_sheets(new_df)
-                st.success("🎉 Registration saved to cloud registry!")
-                st.rerun()
+                
+                if save_to_google_sheets(new_df):
+                    st.success("🎉 Registration saved to cloud registry!")
+                    st.rerun()
 
 # --- OPTION 3: ADMIN APPROVAL PANEL ---
 elif menu == "🔐 Admin Verification Panel":
@@ -115,7 +131,7 @@ elif menu == "🔐 Admin Verification Panel":
     
     if admin_password == "SBS_Admin_2026":
         if staff_df.empty:
-            st.info("No entries found.")
+            st.info("No entries found in the cloud database registry.")
         else:
             status_filter = st.selectbox("Filter Registry By Status", ["All", "Pending", "Approved", "Rejected"])
             df_filtered = staff_df if status_filter == "All" else staff_df[staff_df["Approval Status"] == status_filter]
@@ -136,9 +152,9 @@ elif menu == "🔐 Admin Verification Panel":
                     if st.button("👍 Grant Approval", use_container_width=True, key=f"app_{selected_comp_id}"):
                         staff_df.at[row_idx, "Approval Status"] = "Approved"
                         staff_df.at[row_idx, "Approved By"] = "Management Board"
-                        save_to_google_sheets(staff_df)
-                        st.success("Approved!")
-                        st.rerun()
+                        if save_to_google_sheets(staff_df):
+                            st.success("Approved!")
+                            st.rerun()
                 with col2:
                     if st.button("❌ Deny & Delete Files", use_container_width=True, key=f"rej_{selected_comp_id}"):
                         files_to_delete = [f.strip() for f in str(staff_details['Credential Files']).split("|") if f.strip()]
@@ -149,9 +165,9 @@ elif menu == "🔐 Admin Verification Panel":
                         
                         staff_df.at[row_idx, "Approval Status"] = "Rejected"
                         staff_df.at[row_idx, "Approved By"] = "Management Board"
-                        save_to_google_sheets(staff_df)
-                        st.warning("Rejected and removed files.")
-                        st.rerun()
+                        if save_to_google_sheets(staff_df):
+                            st.warning("Rejected and removed files.")
+                            st.rerun()
                         
             # Document Preview Gallery
             st.markdown("### 🔍 Quick-View Documents Registry")
