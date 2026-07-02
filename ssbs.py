@@ -29,7 +29,7 @@ menu = st.sidebar.radio("Navigation Menu", [
 
 # --- OPTION 1: HOME PAGE ---
 if menu == "🏠 Home Dashboard":
-    st.title("🏠 Secure Block System (SBS) Home")
+    st.title("🏠 Sokoto State Bureau of Statistics (SBS) Home")
     st.write("Welcome! Please use the sidebar navigation to switch between modules.")
     
     df = st.session_state.staff_df
