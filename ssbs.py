@@ -1,121 +1,229 @@
 import streamlit as st
-import pandas as pd  
-import os           
+import pandas as pd
+import re
+import os
 
-# Define the CSV file and photo folder to store staff data
-STAFF_DATA_FILE = 'staff_details.csv'
-PHOTO_DIR = 'staff_photos'
+# --- INITIALIZATION SETUP ---
+UPLOAD_DIR = "uploads"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
 
-# Ensure the photo directory exists
-if not os.path.exists(PHOTO_DIR):
-    os.makedirs(PHOTO_DIR)
+MAX_FILE_SIZE_MB = 5  # Set max file size constraint
 
-def load_staff_data():
-    # Added 'Level' and 'Photo Path' to required columns
-    required_columns = ['Comp Number', 'Name', 'Department/Unit', 'Designation', 'Level', 'Email', 'Phone Number', 'Photo Path']
+if 'staff_df' not in st.session_state:
+    st.session_state.staff_df = pd.DataFrame(columns=[
+        "Computer Number", "Full Name", "Department", "Designation", 
+        "Grade Level", "Email", "Phone Number", "Credential Files", 
+        "Approval Status", "Approved By"
+    ])
+
+def save_data(df):
+    st.session_state.staff_df = df
+
+# --- MAIN NAVIGATION CONTROLLER ---
+menu = st.sidebar.radio("Navigation Menu", [
+    "🏠 Home Dashboard", 
+    "📝 Staff Registration Form", 
+    "🔐 Admin Verification Panel"
+])
+
+# --- OPTION 1: HOME PAGE ---
+if menu == "🏠 Home Dashboard":
+    st.title("🏠 Secure Block System (SBS) Home")
+    st.write("Welcome! Please use the sidebar navigation to switch between modules.")
     
-    if os.path.exists(STAFF_DATA_FILE):
-        df = pd.read_csv(STAFF_DATA_FILE)
-        
-        # Check if any required columns are missing from the existing file and add them dynamically
-        missing_cols = [col for col in required_columns if col not in df.columns]
-        if missing_cols:
-            for col in missing_cols:
-                df[col] = None
-            df.to_csv(STAFF_DATA_FILE, index=False) # Update file structure safely
-        return df
-        
-    # Return empty layout if file doesn't exist at all
-    return pd.DataFrame(columns=required_columns)
+    df = st.session_state.staff_df
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Submissions", len(df))
+    col2.metric("Pending Review", len(df[df["Approval Status"] == "Pending"]))
+    col3.metric("Approved Staff", len(df[df["Approval Status"] == "Approved"]))
 
-def save_staff_data(df):
-    df.to_csv(STAFF_DATA_FILE, index=False)
-
-# --- Main App Layout ---
-st.title('Sokoto State Bureau of Statistics - Staff Registration')
-
-st.header('Register New Staff')
-
-# Note: st.camera_input works inside st.form, but the user must click "Take Photo" before clicking "Register Staff"
-with st.form('staff_registration_form'):
-    comp_number = st.text_input('Comp Number', help='Unique company/computer number for the staff member')
-    name = st.text_input('Full Name')
-    department_unit = st.text_input('Department/Unit')
-    designation = st.text_input('Designation')
-    level = st.text_input('Level', help='e.g., Grade Level 08, GL 12, etc.')
-    email = st.text_input('Email Address')
-    phone_number = st.text_input('Phone Number')
+# --- OPTION 2: STAFF REGISTRATION FORM ---
+elif menu == "📝 Staff Registration Form":
+    st.title("📝 Staff Credential Registration Portal")
+    st.write("Please fill out your personal and professional details below.")
     
-    # Photo Capture Widget
-    st.write("### Capture Staff Identification Photo")
-    photo_file = st.camera_input("Take a snapshot")
-
-    submitted = st.form_submit_button('Register Staff')
-
-    if submitted:
-        if comp_number and name and department_unit and designation and level and email and phone_number:
-            current_df = load_staff_data()
+    with st.form("registration_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            full_name = st.text_input("Full Legal Name", placeholder="e.g., John Doe").strip()
+            computer_number = st.text_input("Computer Number (Exactly 6 Digits)", placeholder="e.g., 123456").strip()
+            department = st.text_input("Department", placeholder="e.g., Human Resources").strip()
+            designation = st.text_input("Designation / Job Title", placeholder="e.g., Senior Officer").strip()
             
-            # Safe check to guarantee unique Comp Number
-            if 'Comp Number' in current_df.columns and str(comp_number) in current_df['Comp Number'].astype(str).values:
-                st.error(f'Comp Number {comp_number} already exists. Please use a unique number.')
+        with col2:
+            grade_level = st.selectbox("Grade Level", [f"Level {i}" for i in range(1, 18)] + ["Management", "Executive"])
+            email = st.text_input("Email Address", placeholder="e.g., john.doe@company.com").strip()
+            phone_number = st.text_input("Phone Number (e.g., 08012345678 or +234...)", placeholder="e.g., 08031234567").strip()
+        
+        uploaded_files = st.file_uploader(
+            f"Upload Credential Documents (Max {MAX_FILE_SIZE_MB}MB per file)", 
+            type=["pdf", "png", "jpg", "jpeg"], 
+            accept_multiple_files=True
+        )
+        
+        submit_btn = st.form_submit_button("Submit Registration for Approval")
+        
+        if submit_btn:
+            # --- VALIDATION ENGINE WITH STRICT CONSTRAINTS ---
+            
+            # 1. Check for empty fields
+            if not all([full_name, computer_number, department, designation, email, phone_number]):
+                st.error("⚠️ All personal and professional details are required.")
+            
+            # 2. Full Name: Letters & spaces only
+            elif not re.match(r"^[a-zA-Z\s]+$", full_name):
+                st.error("❌ Invalid Name: Name must only contain letters and spaces.")
+            
+            # 3. Computer Number Constraint: Must be exactly 6 digits long
+            elif not (computer_number.isdigit() and len(computer_number) == 6):
+                st.error("❌ Constraint Error: Computer Number must be exactly 6 digits long (e.g., 123456).")
+                
+            # 4. Email Constraint: Basic validation
+            elif not re.match(r"^[^@]+@[^@]+\.[^@]+$", email):
+                st.error("❌ Invalid Email: Please enter a valid email address.")
+                
+            # 5. Phone Number Constraint: Match Nigerian 0... or +234... pattern
+            elif not re.match(r"^(0|\+234)[789][01]\d{8}$", phone_number.replace(" ", "")):
+                st.error("❌ Constraint Error: Enter a valid Nigerian phone number (11 digits starting with 0, or 14 characters starting with +234).")
+                
+            # 6. Check files present
+            elif not uploaded_files:
+                st.error("⚠️ Please upload at least one credential document.")
+                
+            # 7. Check if Computer Number already exists
+            elif computer_number in st.session_state.staff_df["Computer Number"].values:
+                st.error(f"❌ A registration is already on file for Computer Number: {computer_number}")
+                
             else:
-                photo_path = "No Photo Saved"
+                # 8. File Size Constraint Check
+                large_file_found = False
+                for f_item in uploaded_files:
+                    file_size_mb = f_item.size / (1024 * 1024)
+                    if file_size_mb > MAX_FILE_SIZE_MB:
+                        st.error(f"❌ Constraint Error: The file `{f_item.name}` exceeds the {MAX_FILE_SIZE_MB}MB size limit ({file_size_mb:.2f}MB).")
+                        large_file_found = True
+                        break
                 
-                # If a photo was captured, save it locally to the staff_photos folder
-                if photo_file is not None:
-                    photo_filename = f"{str(comp_number).strip()}.png"
-                    photo_path = os.path.join(PHOTO_DIR, photo_filename)
-                    with open(photo_path, "wb") as f:
-                        f.write(photo_file.getbuffer())
-                
-                new_staff = pd.DataFrame([{
-                    'Comp Number': comp_number,
-                    'Name': name,
-                    'Department/Unit': department_unit,
-                    'Designation': designation,
-                    'Level': level,
-                    'Email': email,
-                    'Phone Number': phone_number,
-                    'Photo Path': photo_path
-                }])
-                
-                updated_df = pd.concat([current_df, new_staff], ignore_index=True)
-                save_staff_data(updated_df)
-                st.success(f'Staff {name} registered successfully!')
-                st.rerun() # Refresh layout to show updated table immediately
-        else:
-            st.error('Please fill in all the details, including capturing a photo.')
-
-# --- Display Section ---
-st.header('Registered Staff Registry')
-staff_df = load_staff_data()
-
-if not staff_df.empty:
-    # Display the basic interactive table
-    st.subheader("Data Overview")
-    display_cols = ['Comp Number', 'Name', 'Department/Unit', 'Designation', 'Level', 'Email', 'Phone Number']
-    valid_display_cols = [col for col in display_cols if col in staff_df.columns]
-    st.dataframe(staff_df[valid_display_cols], use_container_width=True)
-    
-    # Render rich Profile view with Photos
-    st.subheader("Staff Profiles & Identification")
-    for index, row in staff_df.iterrows():
-        # Create a visually clean card interface using Streamlit columns
-        with st.container(border=True):
-            col1, col2 = st.columns([1, 3])
-            
-            with col1:
-                # Check if file exists, show a fallback if it doesn't
-                if pd.notna(row.get('Photo Path')) and os.path.exists(str(row['Photo Path'])):
-                    st.image(row['Photo Path'], width=130)
-                else:
-                    st.image("https://cdn-icons-png.flaticon.com/512/149/149071.png", width=130) # Default profile avatar
+                if not large_file_found:
+                    saved_file_names = []
+                    for f_item in uploaded_files:
+                        safe_name = f_item.name.replace(" ", "_")
+                        file_path = os.path.join(UPLOAD_DIR, safe_name)
+                        
+                        with open(file_path, "wb") as f:
+                            f.write(f_item.getbuffer())
+                        saved_file_names.append(safe_name)
                     
-            with col2:
-                st.markdown(f"### **{row['Name']}**")
-                st.markdown(f"**Comp Number:** {row['Comp Number']} | **Level:** {row['Level']}")
-                st.markdown(f"**Dept/Unit:** {row['Department/Unit']} | **Designation:** {row['Designation']}")
-                st.markdown(f"**Contact:** {row['Email']} / {row['Phone Number']}")
-else:
-    st.info('No staff registered yet.')
+                    files_string = "|".join(saved_file_names)
+                    
+                    new_entry = {
+                        "Computer Number": computer_number,
+                        "Full Name": full_name,
+                        "Department": department,
+                        "Designation": designation,
+                        "Grade Level": grade_level,
+                        "Email": email,
+                        "Phone Number": phone_number,
+                        "Credential Files": files_string,
+                        "Approval Status": "Pending",
+                        "Approved By": "N/A"
+                    }
+                    
+                    updated_df = pd.concat([st.session_state.staff_df, pd.DataFrame([new_entry])], ignore_index=True)
+                    save_data(updated_df)
+                    st.success(f"🎉 Success! Registration details saved for {full_name}.")
+
+# --- OPTION 3: ADMIN APPROVAL PANEL ---
+elif menu == "🔐 Admin Verification Panel":
+    st.markdown("### 🔐 Institutional Management & Verification Dashboard")
+    
+    staff_df = st.session_state.staff_df
+    admin_password = st.sidebar.text_input("Enter Admin Verification Key", type="password")
+    
+    if admin_password == "SBS_Admin_2026": 
+        st.write("---")
+        
+        if staff_df.empty:
+            st.info("No registration submissions are in the system yet.")
+        else:
+            status_filter = st.selectbox("Filter Registry By Status", ["All", "Pending", "Approved", "Rejected"])
+            df_filtered = staff_df if status_filter == "All" else staff_df[staff_df["Approval Status"] == status_filter]
+            
+            st.markdown("#### 📊 Current Registry Entries")
+            st.dataframe(df_filtered, use_container_width=True)
+            
+            st.write("---")
+            
+            # Action Processing Section
+            st.markdown("### 🛠️ Process Pending Approvals")
+            pending_staff = staff_df[staff_df["Approval Status"] == "Pending"]["Computer Number"].tolist()
+            
+            if not pending_staff:
+                st.success("✅ Excellent! There are currently zero pending submissions.")
+            else:
+                selected_comp_id = st.selectbox("Select Computer Number to Action", pending_staff, key="action_selector")
+                row_idx = staff_df[staff_df["Computer Number"] == selected_comp_id].index[0]
+                staff_details = staff_df.loc[row_idx]
+                
+                st.info(f"**Target Profile:** {staff_details['Full Name']} | **Dept:** {staff_details['Department']} | **Role:** {staff_details['Designation']}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("👍 Grant Ethical Approval", use_container_width=True, key=f"approve_{selected_comp_id}"):
+                        st.session_state.staff_df.at[row_idx, "Approval Status"] = "Approved"
+                        st.session_state.staff_df.at[row_idx, "Approved By"] = "Management Board"
+                        st.success(f"Approved entry for {staff_details['Full Name']}")
+                        st.rerun()
+                        
+                with col2:
+                    if st.button("❌ Deny / Flag File", use_container_width=True, key=f"reject_{selected_comp_id}"):
+                        files_to_delete = [f.strip() for f in staff_details['Credential Files'].split("|") if f.strip()]
+                        for single_file_name in files_to_delete:
+                            file_path = os.path.join(UPLOAD_DIR, single_file_name)
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                        
+                        st.session_state.staff_df.at[row_idx, "Approval Status"] = "Rejected"
+                        st.session_state.staff_df.at[row_idx, "Approved By"] = "Management Board"
+                        st.warning(f"Rejected submission and deleted local files for {staff_details['Full Name']}")
+                        st.rerun()
+
+            st.write("---")
+            
+            # Document Gallery View
+            st.markdown("### 🔍 Quick-View Documents Registry")
+            all_comp_list = staff_df["Computer Number"].tolist()
+            selected_global_id = st.selectbox("Choose Computer Number to view files:", all_comp_list, key="global_viewer")
+            
+            global_idx = staff_df[staff_df["Computer Number"] == selected_global_id].index[0]
+            global_details = staff_df.loc[global_idx]
+            
+            with st.expander(f"👁️ View Uploaded Files for: {global_details['Full Name']}", expanded=True):
+                g_file_names = [f.strip() for f in global_details['Credential Files'].split("|") if f.strip()]
+                
+                for idx, single_file_name in enumerate(g_file_names):
+                    g_file_path = os.path.join(UPLOAD_DIR, single_file_name)
+                    st.write(f"📁 **File {idx+1}:** `{single_file_name}`")
+                    
+                    if os.path.exists(g_file_path):
+                        g_file_ext = single_file_name.split(".")[-1].lower()
+                        if g_file_ext in ["png", "jpg", "jpeg"]:
+                            st.image(g_file_path, caption=single_file_name, use_container_width=True)
+                        elif g_file_ext == "pdf":
+                            with open(g_file_path, "rb") as p_file:
+                                st.download_button(
+                                    f"📥 Download {single_file_name}", 
+                                    data=p_file.read(), 
+                                    file_name=single_file_name, 
+                                    key=f"gal_{selected_global_id}_{idx}"
+                                )
+                    else:
+                        st.error(f"❌ File not found on disk (It may have been deleted during a rejection).")
+                    st.write("---")
+    
+    elif admin_password != "":
+        st.error("❌ Incorrect Security Key. Access Denied.")
+    else:
+        st.warning("🔒 Please supply the valid verification security key in the sidebar to manage clearances.")
